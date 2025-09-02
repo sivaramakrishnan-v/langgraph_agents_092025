@@ -1,0 +1,14 @@
+{
+  "database_node": {
+    "agent": "get_db_agent",
+    "prompt": "Handles database queries like record lookups by ID or filters."
+  },
+  "github_node": {
+    "agent": "get_github_agent",
+    "prompt": "Handles GitHub-related queries like stars, PRs, and issues."
+  },
+  "knowledge_node": {
+    "agent": "get_knowledge_agent",
+    "prompt": "Answers general questions using internal documentation and wikis."
+  }
+}
