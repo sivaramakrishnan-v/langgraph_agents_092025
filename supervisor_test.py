@@ -8,10 +8,12 @@ from langgraph.schema import BaseMessage, HumanMessage
 from langgraph.prebuilt import add_messages
 from LLM.Gemini import VertexAI
 
+# --- Load agent registry ---
 REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "config", "agent_registry.json")
 with open(REGISTRY_PATH, "r", encoding="utf-8") as f:
     AGENT_REGISTRY = json.load(f)
 
+# --- Define MultiAgentState ---
 class MultiAgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     feedback: list[str]
@@ -19,35 +21,15 @@ class MultiAgentState(TypedDict):
     next_node: Optional[str]
     visited: list[str]
 
+
+# --- Initial router: force to database_node ---
 def supervisor_router(state: MultiAgentState) -> str:
-    """Initial router for user input."""
-    user_input = ""
-    for msg in reversed(state["messages"]):
-        if isinstance(msg, HumanMessage):
-            user_input = msg.content
-            break
+    state["feedback"].append("Initial route forced to: database_node")
+    return "database_node"
 
-    descriptions = "\n".join(
-        f"- {k}: {v['prompt']}" for k, v in AGENT_REGISTRY.items()
-    )
 
-    prompt = f"""
-You are the supervisor of a multi-agent system.
-Available agents:
-{descriptions}
-
-The user asked:
-{user_input}
-
-Which agent should handle this?
-Reply with ONLY the node name.
-"""
-    decision = VertexAI().getVertexModel().invoke(prompt).strip().lower()
-    state["feedback"].append(f"Initial route: {decision}")
-    return decision if decision in AGENT_REGISTRY else "END"
-
+# --- Follow-up routing using Gemini ---
 def should_continue(state: MultiAgentState) -> str:
-    """Handles routing after each node's output."""
     if not state["messages"]:
         return "END"
 
@@ -55,9 +37,12 @@ def should_continue(state: MultiAgentState) -> str:
     content = getattr(last, "content", "")
     msg_type = type(last).__name__
 
-    descriptions = "\n".join(
-        f"- {k}: {v['prompt']}" for k, v in AGENT_REGISTRY.items()
-    )
+    # ✅ Clear and readable descriptions
+    descriptions_list = []
+    for node_name, config in AGENT_REGISTRY.items():
+        agent_purpose = config.get("prompt", "[No description]")
+        descriptions_list.append(f"- {node_name}: {agent_purpose}")
+    descriptions = "\n".join(descriptions_list)
 
     prompt = f"""
 You are the supervisor of a multi-agent system.
@@ -69,23 +54,25 @@ The last message was from: {msg_type}
 {content}
 
 Which agent should handle this next?
-Reply with ONLY the node name. If task is done, reply END.
+Reply with ONLY the node name. If the task is complete, reply END.
 """
+
     decision = VertexAI().getVertexModel().invoke(prompt).strip().lower()
+    print("LLM decision (follow-up):", decision)
+
     state["feedback"].append(f"Should continue to: {decision}")
     return decision if decision in AGENT_REGISTRY else "END"
 
+
+# --- Test harness ---
 if __name__ == "__main__":
-    # Dummy message stubs for test
     class FakeHumanMessage:
-        def __init__(self, content):
-            self.content = content
+        def __init__(self, content): self.content = content
 
     class FakeToolMessage:
-        def __init__(self, content):
-            self.content = content
+        def __init__(self, content): self.content = content
 
-    # Simulated initial state
+    # Initial test state
     state: MultiAgentState = {
         "messages": [FakeHumanMessage("Check the database for record 123")],
         "feedback": [],
@@ -99,8 +86,8 @@ if __name__ == "__main__":
     print("Next node:", next_node)
     print("Feedback:", state["feedback"])
 
-    # Simulate a node response
-    state["messages"].append(FakeToolMessage("Found record 123 in database"))
+    # Simulate DB response
+    state["messages"].append(FakeToolMessage("No records found in database"))
     state["current_node"] = next_node
     state["visited"].append(next_node)
 
