@@ -25,14 +25,72 @@ class MultiAgentState(TypedDict):
     visited: list[str]
 
 
+def get_last_human_message(messages: list[BaseMessage]) -> str:
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            return msg.content
+    return ""
+
 # --- Initial router: force to database_node ---
 def supervisor_router(state: MultiAgentState) -> str:
     state["feedback"].append("Initial route forced to: database_node")
     return "database_node"
 
 
-# --- Follow-up routing using rules + LLM fallback ---
+
 def should_continue(state: MultiAgentState) -> str:
+    if not state["messages"]:
+        return "END"
+
+    last_msg = state["messages"][-1]
+    last_output = getattr(last_msg, "content", "").strip().lower()
+    user_input = get_last_human_message(state["messages"]).strip()
+
+    # 🛑 Prevent infinite routing or fallback loops
+    if state.get("current_node") == "knowledge_node":
+        state["feedback"].append("Terminating after knowledge_node.")
+        return "END"
+
+    if "knowledge_node" in state.get("visited", []):
+        state["feedback"].append("Knowledge node already visited, stopping.")
+        return "END"
+
+    if any(kw in last_output for kw in ["no relevant info", "task complete", "nothing found"]):
+        state["feedback"].append("Output indicates completion, stopping.")
+        return "END"
+
+    # 🧠 Descriptions for Gemini
+    descriptions = "\n".join(
+        f"- {name}: {cfg.get('prompt', '[No description]')}" for name, cfg in AGENT_REGISTRY.items()
+    )
+
+    # 🧠 Gemini prompt
+    prompt = f"""
+You are the supervisor of a multi-agent system.
+
+Available agents:
+{descriptions}
+
+The user originally asked:
+{user_input}
+
+The last agent replied:
+{last_output}
+
+Which agent should handle this next?
+Reply with ONLY the node name. If the task is complete, reply END.
+"""
+
+    decision = VertexAI().getVertexModel().invoke(prompt).strip().lower()
+    print("🤖 LLM routing decision:", decision)
+
+    state["feedback"].append(f"Should continue to: {decision}")
+    return decision if decision in AGENT_REGISTRY else "END"
+
+
+
+# --- Follow-up routing using rules + LLM fallback ---
+def should_continue_old(state: MultiAgentState) -> str:
     if not state["messages"]:
         return "END"
 
@@ -40,6 +98,8 @@ def should_continue(state: MultiAgentState) -> str:
     content = getattr(last, "content", "")
     msg_type = type(last).__name__
     content_lower = content.lower()
+    last_output = getattr(last_msg, "content", "").strip().lower()
+    user_input = get_last_human_message(state["messages"]).strip()
 
     state["feedback"].append(f"[Supervisor] Last message: [{msg_type}] {content}")
 
