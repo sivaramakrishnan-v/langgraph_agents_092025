@@ -45,8 +45,9 @@ def get_agent_outputs_grouped(state: MultiAgentState) -> dict[str, str]:
     for i, msg in enumerate(tool_ai_messages):
         if i < len(visited):
             node = visited[i]
-            if node not in outputs:  # only first response per agent
-                outputs[node] = msg.content.strip()
+            content = msg.content.strip()
+            if content and node not in outputs:  # ✅ skip blank
+                outputs[node] = content
     return outputs
 
 # -----------------------------
