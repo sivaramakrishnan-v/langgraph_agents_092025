@@ -81,6 +81,7 @@ def planner_node(state: MultiAgentState) -> MultiAgentState:
         f"- {agent}: {response}" for agent, response in outputs_by_agent.items()
     ) or "No agent responses yet."
 
+    # 🔍 Refined Prompt
     prompt = f"""
 You are the planner in a multi-agent system.
 
@@ -93,15 +94,25 @@ Agent responses so far:
 Agents you can choose from:
 {agent_descriptions}
 
-Based on the above, generate a step-by-step plan of agent names to call in sequence.
-Reply ONLY with a comma-separated list of node names. For example:
-database_node, github_node
+Your task is to decide which agents are absolutely necessary to complete the task.
+
+✅ Return only the agents required.
+❌ Do NOT include agents unless they are relevant to the user’s query.
+✅ If the task is already answered, return: END
+
+Reply ONLY with a comma-separated list of agent names (e.g., knowledge_node, github_node).
+
+Examples:
+- User: "What is GitHub?" → Return: knowledge_node
+- User: "Fetch issues from GitHub repo" → Return: github_node
+- User: "Find DB record and check for GitHub repo" → Return: database_node, github_node
+- User: "Explain what’s in the KB" → Return: knowledge_node
+- Task already answered → Return: END
 """.strip()
 
     plan_text = VertexAI().getVertexModel().invoke(prompt).strip().lower()
     print("🧠 Planner LLM returned:", plan_text)
 
-    # Parse plan and filter valid steps
     plan = [step.strip() for step in plan_text.split(",") if step.strip() in AGENT_REGISTRY]
     state["plan"] = plan
     state["current_step"] = 0
@@ -111,6 +122,8 @@ database_node, github_node
         state["next_node"] = "END"
     else:
         state["feedback"].append(f"Planner created plan: {plan}")
+        if len(plan) > 2:
+            state["feedback"].append("⚠️ Plan has multiple steps. Review if all are needed.")
 
     return state
 
